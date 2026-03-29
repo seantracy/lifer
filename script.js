@@ -238,6 +238,10 @@ function initializePlayerNames() {
             persistState();
         };
 
+        input.addEventListener('focus', () => {
+            input.select();
+        });
+
         input.addEventListener('input', syncName);
         input.addEventListener('blur', syncName);
     });

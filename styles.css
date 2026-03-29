@@ -352,18 +352,24 @@ body.modal-open {
     .counter {
         inset: 12px;
         grid-template-rows: auto auto;
+        justify-content: center;
         align-content: center;
         justify-items: center;
+        text-align: center;
         row-gap: 8px;
     }
 
     .player-name {
+        width: 100%;
         align-self: center;
         justify-self: center;
+        text-align: center;
     }
 
     .counter-value {
+        width: 100%;
         align-self: center;
         justify-self: center;
+        text-align: center;
     }
 }
