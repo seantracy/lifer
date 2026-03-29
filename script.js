@@ -363,6 +363,7 @@ function initializeTile(tile, initialCount, options = {}) {
     let leftDeltaTimeout = null;
     let rightDeltaTimeout = null;
     let shakeTimeout = null;
+    let lastTouchEndAt = 0;
     let isPressing = false;
     let longPressTriggered = false;
     let pressSide = null;
@@ -595,6 +596,17 @@ function initializeTile(tile, initialCount, options = {}) {
 
         pulseAndClearActive();
     });
+
+    tile.addEventListener('touchend', (event) => {
+        const now = Date.now();
+
+        if (now - lastTouchEndAt < 350) {
+            // iOS Safari fallback: suppress double-tap page zoom on rapid repeated taps.
+            event.preventDefault();
+        }
+
+        lastTouchEndAt = now;
+    }, { passive: false });
 
     return {
         setCount(nextCount) {
