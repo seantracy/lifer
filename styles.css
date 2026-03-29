@@ -347,3 +347,23 @@ body.modal-open {
     75% { transform: translate(-0.9px, 0.5px) rotate(-0.25deg); }
     100% { transform: translate(0, 0) rotate(0deg); }
 }
+
+@media (max-width: 900px) and (orientation: portrait) {
+    .counter {
+        inset: 12px;
+        grid-template-rows: auto auto;
+        align-content: center;
+        justify-items: center;
+        row-gap: 8px;
+    }
+
+    .player-name {
+        align-self: center;
+        justify-self: center;
+    }
+
+    .counter-value {
+        align-self: center;
+        justify-self: center;
+    }
+}
