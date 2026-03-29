@@ -18,6 +18,29 @@ let modalTileControllers = [];
 let activeModalTileIndex = null;
 let isRestoringPersistedState = false;
 
+function installGlobalSafariZoomGuard() {
+    let lastTouchEndAt = 0;
+
+    document.addEventListener('touchend', (event) => {
+        const now = Date.now();
+
+        if (now - lastTouchEndAt < 350) {
+            event.preventDefault();
+        }
+
+        lastTouchEndAt = now;
+    }, { passive: false });
+
+    // iOS-only gesture events fired for pinch zoom on Safari.
+    ['gesturestart', 'gesturechange', 'gestureend'].forEach((eventName) => {
+        document.addEventListener(eventName, (event) => {
+            event.preventDefault();
+        }, { passive: false });
+    });
+}
+
+installGlobalSafariZoomGuard();
+
 function readPersistedState() {
     try {
         const rawState = window.localStorage.getItem(storageKey);
