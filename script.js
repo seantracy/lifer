@@ -230,6 +230,12 @@ function initializePlayerNames() {
         const tileIndex = Number(tile.dataset.index);
 
         input.value = playerNameByIndex[tileIndex] || defaultPlayerNamesByIndex[tileIndex] || '';
+        input.setAttribute('autocomplete', 'off');
+        input.setAttribute('autocorrect', 'off');
+        input.setAttribute('autocapitalize', 'off');
+        input.setAttribute('spellcheck', 'false');
+        input.setAttribute('name', `player-name-${tileIndex}`);
+        input.setAttribute('inputmode', 'text');
 
         const syncName = () => {
             const trimmed = input.value.trim();
