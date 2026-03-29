@@ -2,6 +2,7 @@ const mainTiles = document.querySelectorAll('#color-grid .tile');
 const mainEllipses = document.querySelectorAll('#color-grid .tile-ellipsis');
 const modalTiles = document.querySelectorAll('#modal-grid .tile');
 const modalBackdrop = document.querySelector('#tile-modal');
+const modalPanel = document.querySelector('.modal-panel');
 const modalCloseButton = document.querySelector('#tile-modal-close');
 const resetButton = document.querySelector('#reset-button');
 const defaultPlayerNamesByIndex = ['Player 1', 'Player 2', 'Player 4', 'Player 3'];
@@ -141,9 +142,25 @@ function persistState() {
 }
 
 function setModalOpenState(isOpen) {
-    modalBackdrop.hidden = !isOpen;
-    modalBackdrop.setAttribute('aria-hidden', String(!isOpen));
-    document.body.classList.toggle('modal-open', isOpen);
+    if (isOpen) {
+        modalBackdrop.hidden = false;
+        modalBackdrop.setAttribute('aria-hidden', 'false');
+        modalBackdrop.classList.remove('closing');
+        document.body.classList.add('modal-open');
+        // Remove closing class if it exists from previous close
+        modalPanel.classList.remove('closing');
+    } else {
+        // Add closing animation classes
+        modalBackdrop.classList.add('closing');
+        modalPanel.classList.add('closing');
+        
+        // Wait for animation to complete before hiding
+        setTimeout(() => {
+            modalBackdrop.hidden = true;
+            modalBackdrop.setAttribute('aria-hidden', 'true');
+            document.body.classList.remove('modal-open');
+        }, 720); // Match animation duration
+    }
 }
 
 function updateResetButtonBackground() {
@@ -153,6 +170,22 @@ function updateResetButtonBackground() {
 
     const [topLeft, topRight, bottomLeft, bottomRight] = mainTileControllers.map((controller) => controller.getColor());
     resetButton.style.background = [
+        `radial-gradient(circle at 30% 30%, ${topLeft} 0%, transparent 58%)`,
+        `radial-gradient(circle at 70% 30%, ${topRight} 0%, transparent 58%)`,
+        `radial-gradient(circle at 30% 70%, ${bottomLeft} 0%, transparent 58%)`,
+        `radial-gradient(circle at 70% 70%, ${bottomRight} 0%, transparent 58%)`,
+        `radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0) 62%)`,
+        `rgba(17, 17, 17, 0.8)`
+    ].join(', ');
+}
+
+function updateModalCloseButtonBackground() {
+    if (!modalCloseButton || modalTileControllers.length !== 4) {
+        return;
+    }
+
+    const [topLeft, topRight, bottomLeft, bottomRight] = modalTileControllers.map((controller) => controller.getColor());
+    modalCloseButton.style.background = [
         `radial-gradient(circle at 30% 30%, ${topLeft} 0%, transparent 58%)`,
         `radial-gradient(circle at 70% 30%, ${topRight} 0%, transparent 58%)`,
         `radial-gradient(circle at 30% 70%, ${bottomLeft} 0%, transparent 58%)`,
@@ -371,6 +404,10 @@ function randomDistinctColors(count) {
     return colors;
 }
 
+function randomColor() {
+    return randomDistinctColors(1)[0];
+}
+
 function initializeTile(tile, initialCount, options = {}) {
     const {
         minCount = Number.NEGATIVE_INFINITY,
@@ -385,6 +422,10 @@ function initializeTile(tile, initialCount, options = {}) {
     const counterValue = tile.querySelector('.counter-value');
     const leftDelta = document.createElement('span');
     const rightDelta = document.createElement('span');
+    const tileIndex = Number(tile.dataset.index);
+    const invertControlsForSeat = tileIndex === 0 || tileIndex === 1;
+
+    tile.classList.toggle('tile-rotated', invertControlsForSeat);
 
     leftDelta.className = 'delta-indicator left';
     rightDelta.className = 'delta-indicator right';
@@ -466,7 +507,7 @@ function initializeTile(tile, initialCount, options = {}) {
         }, 240);
     }
 
-    function updateCounter(delta) {
+    function updateCounter(delta, indicatorSideOverride = null) {
         if (lockWhenDefeated && isDefeated()) {
             if (!reviveOnPositiveDelta || delta <= 0) {
                 return;
@@ -484,7 +525,8 @@ function initializeTile(tile, initialCount, options = {}) {
 
         count = nextCount;
         syncCounter();
-        showDelta(appliedDelta < 0 ? 'left' : 'right', appliedDelta);
+        const indicatorSide = indicatorSideOverride || getIndicatorSideForDelta(appliedDelta);
+        showDelta(indicatorSide, appliedDelta);
 
         if (Math.abs(appliedDelta) >= 10) {
             triggerHeavyHitEffect();
@@ -500,6 +542,24 @@ function initializeTile(tile, initialCount, options = {}) {
         const clickX = event.clientX - rect.left;
         const midpoint = rect.width / 2;
         return clickX < midpoint ? 'left' : 'right';
+    }
+
+    function getDeltaForPressSide(side, magnitude = 1) {
+        const effectiveSide = invertControlsForSeat
+            ? (side === 'left' ? 'right' : 'left')
+            : side;
+
+        return effectiveSide === 'left' ? -magnitude : magnitude;
+    }
+
+    function getIndicatorSideForDelta(delta) {
+        const baseSide = delta < 0 ? 'left' : 'right';
+
+        if (!invertControlsForSeat) {
+            return baseSide;
+        }
+
+        return baseSide === 'left' ? 'right' : 'left';
     }
 
     function setActiveSide(side) {
@@ -557,7 +617,7 @@ function initializeTile(tile, initialCount, options = {}) {
                 }
 
                 longPressTriggered = true;
-                updateCounter(pressSide === 'left' ? -10 : 10);
+                updateCounter(getDeltaForPressSide(pressSide, 10), pressSide);
                 scheduleHoldRepeat();
             }, 1000);
         }
@@ -581,7 +641,7 @@ function initializeTile(tile, initialCount, options = {}) {
 
 
         if (!longPressTriggered) {
-            updateCounter(pressSide === 'left' ? -1 : 1);
+            updateCounter(getDeltaForPressSide(pressSide, 1), pressSide);
         }
 
         isPressing = false;
@@ -754,6 +814,7 @@ function openTileModal(tileIndex) {
     });
 
     applyModalDeductionToMainTile(tileIndex);
+    updateModalCloseButtonBackground();
 
     setModalOpenState(true);
 }
