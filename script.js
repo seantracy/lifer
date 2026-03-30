@@ -446,6 +446,7 @@ function initializeTile(tile, initialCount, options = {}) {
         lockWhenDefeated = false,
         reviveOnPositiveDelta = false,
         enableSwipeSplit = false,
+        invertForSeat = true,
         onCountChange = null,
     } = options;
     const counterValue = tile.querySelector('.counter-value');
@@ -454,7 +455,7 @@ function initializeTile(tile, initialCount, options = {}) {
     const leftDelta = document.createElement('span');
     const rightDelta = document.createElement('span');
     const tileIndex = Number(tile.dataset.index);
-    const invertControlsForSeat = tileIndex === 0 || tileIndex === 1;
+    const invertControlsForSeat = invertForSeat && (tileIndex === 0 || tileIndex === 1);
 
     tile.classList.toggle('tile-rotated', invertControlsForSeat);
 
@@ -467,18 +468,19 @@ function initializeTile(tile, initialCount, options = {}) {
     let count = initialCount;
     let activeTimeout = null;
     let holdTimeout = null;
+    let splitHoldTimeout = null;
     let leftDeltaTimeout = null;
     let rightDeltaTimeout = null;
     let shakeTimeout = null;
     let lastTouchEndAt = 0;
     let isPressing = false;
     let longPressTriggered = false;
+    let splitHoldTriggered = false;
+    let pressInSplitSafeArea = false;
     let pressSide = null;
     let activeSplitIndex = 0;
     let splitMode = false;
     let splitCounts = [initialCount, 0];
-    let pressStartX = 0;
-    let pressStartY = 0;
     let baseColor = tile.style.backgroundColor;
     let forcedDefeated = false;
 
@@ -500,8 +502,12 @@ function initializeTile(tile, initialCount, options = {}) {
 
     function syncCounter() {
         if (splitMode) {
-            const leftSideSymbol = getDeltaForPressSide('left', 1) > 0 ? '+' : '-';
-            const rightSideSymbol = getDeltaForPressSide('right', 1) > 0 ? '+' : '-';
+            // Always render '- number +' in screen space.
+            // For non-rotated tiles the player reads it directly as '- +'.
+            // For rotated tiles (players 1 & 2) the 180° CSS flip makes them see '+ -',
+            // matching the coordinate mirror in getPressContextFromEvent.
+            const leftSideSymbol = '-';
+            const rightSideSymbol = '+';
             counterValue.innerHTML = [
                 `<span class="split-counter-part left-part">`,
                 `<span class="split-counter-tap-hint">${leftSideSymbol}</span>`,
@@ -621,7 +627,10 @@ function initializeTile(tile, initialCount, options = {}) {
     }
 
     function getDeltaForPressSide(side, magnitude = 1) {
-        const effectiveSide = invertControlsForSeat
+        // In split mode, getPressContextFromEvent already mirrors X for rotated seats,
+        // so the side is already in player space — skip the seat inversion.
+        const shouldInvert = invertControlsForSeat && !splitMode;
+        const effectiveSide = shouldInvert
             ? (side === 'left' ? 'right' : 'left')
             : side;
 
@@ -641,17 +650,46 @@ function initializeTile(tile, initialCount, options = {}) {
     function getPressContextFromEvent(event) {
         if (!splitMode) {
             const side = getSideFromEvent(event);
-            return { splitIndex: 0, side };
+            return { splitIndex: 0, side, screenSplitIndex: 0, screenSide: side };
         }
 
         const rect = counterValue.getBoundingClientRect();
         const relativeX = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
         const halfWidth = rect.width / 2;
-        const splitIndex = relativeX < halfWidth ? 0 : 1;
-        const localX = relativeX - splitIndex * halfWidth;
+
+        // Screen-space quarter (used for the flash overlay which is in screen coords).
+        const screenSplitIndex = relativeX < halfWidth ? 0 : 1;
+        const screenLocalX = relativeX - screenSplitIndex * halfWidth;
+        const screenSide = screenLocalX < halfWidth / 2 ? 'left' : 'right';
+
+        // Player-space quarter: mirror X for rotated seats so logic matches what the player sees.
+        const mappedX = invertControlsForSeat ? rect.width - relativeX : relativeX;
+        const splitIndex = mappedX < halfWidth ? 0 : 1;
+        const localX = mappedX - splitIndex * halfWidth;
         const side = localX < halfWidth / 2 ? 'left' : 'right';
 
-        return { splitIndex, side };
+        return { splitIndex, side, screenSplitIndex, screenSide };
+    }
+
+    function isInSplitSafeArea(event) {
+        if (!enableSwipeSplit || splitMode) {
+            return false;
+        }
+
+        if (event.target instanceof Element && event.target.closest('.counter-value')) {
+            return true;
+        }
+
+        const rect = tile.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const safeHalfWidth = Math.max(84, rect.width * 0.24);
+        const safeHalfHeight = Math.max(64, rect.height * 0.22);
+
+        return (
+            Math.abs(event.clientX - centerX) <= safeHalfWidth &&
+            Math.abs(event.clientY - centerY) <= safeHalfHeight
+        );
     }
 
     function activateSplitMode() {
@@ -722,18 +760,33 @@ function initializeTile(tile, initialCount, options = {}) {
 
         isPressing = true;
         longPressTriggered = false;
+        splitHoldTriggered = false;
+        pressInSplitSafeArea = isInSplitSafeArea(event);
         pressSide = pressContext.side;
         activeSplitIndex = splitMode ? pressContext.splitIndex : 0;
-        pressStartX = event.clientX;
-        pressStartY = event.clientY;
         if (splitMode) {
-            setActiveSplitQuarter(activeSplitIndex, pressContext.side);
+            setActiveSplitQuarter(pressContext.screenSplitIndex, pressContext.screenSide);
         } else {
             setActiveSide(pressSide);
         }
 
         if (holdTimeout) {
             clearTimeout(holdTimeout);
+        }
+
+        if (splitHoldTimeout) {
+            clearTimeout(splitHoldTimeout);
+        }
+
+        if (pressInSplitSafeArea) {
+            splitHoldTimeout = setTimeout(() => {
+                if (!isPressing) {
+                    return;
+                }
+                splitHoldTriggered = true;
+                activateSplitMode();
+                clearActiveSide();
+            }, 2000);
         }
 
         function scheduleHoldRepeat() {
@@ -748,7 +801,9 @@ function initializeTile(tile, initialCount, options = {}) {
             }, 1000);
         }
 
-        scheduleHoldRepeat();
+        if (!pressInSplitSafeArea) {
+            scheduleHoldRepeat();
+        }
 
         if (tile.setPointerCapture) {
             tile.setPointerCapture(event.pointerId);
@@ -765,28 +820,18 @@ function initializeTile(tile, initialCount, options = {}) {
             holdTimeout = null;
         }
 
-
-        const swipeDownDistance = event.clientY - pressStartY;
-        const swipeHorizontalDistance = Math.abs(event.clientX - pressStartX);
-        const shouldSplitFromSwipe =
-            enableSwipeSplit &&
-            !splitMode &&
-            !longPressTriggered &&
-            swipeDownDistance >= 60 &&
-            swipeHorizontalDistance <= 40;
-
-        if (shouldSplitFromSwipe) {
-            activateSplitMode();
+        if (splitHoldTimeout) {
+            clearTimeout(splitHoldTimeout);
+            splitHoldTimeout = null;
         }
 
-        if (!longPressTriggered) {
-            if (!shouldSplitFromSwipe) {
-                updateCounter(getDeltaForPressSide(pressSide, 1), pressSide);
-            }
+        if (!longPressTriggered && !splitHoldTriggered) {
+            updateCounter(getDeltaForPressSide(pressSide, 1), pressSide);
         }
 
         isPressing = false;
         pressSide = null;
+        pressInSplitSafeArea = false;
         pulseAndClearActive();
 
         if (tile.releasePointerCapture) {
@@ -798,10 +843,17 @@ function initializeTile(tile, initialCount, options = {}) {
         isPressing = false;
         pressSide = null;
         longPressTriggered = false;
+        splitHoldTriggered = false;
+        pressInSplitSafeArea = false;
 
         if (holdTimeout) {
             clearTimeout(holdTimeout);
             holdTimeout = null;
+        }
+
+        if (splitHoldTimeout) {
+            clearTimeout(splitHoldTimeout);
+            splitHoldTimeout = null;
         }
 
 
@@ -821,10 +873,17 @@ function initializeTile(tile, initialCount, options = {}) {
         isPressing = false;
         pressSide = null;
         longPressTriggered = false;
+        splitHoldTriggered = false;
+        pressInSplitSafeArea = false;
 
         if (holdTimeout) {
             clearTimeout(holdTimeout);
             holdTimeout = null;
+        }
+
+        if (splitHoldTimeout) {
+            clearTimeout(splitHoldTimeout);
+            splitHoldTimeout = null;
         }
 
 

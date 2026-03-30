@@ -351,7 +351,7 @@ body.modal-open {
     gap: 20px;
     border: 20px solid #111;
     background: #111;
-    border-radius: 28px;
+    border-radius: 38px;
 }
 
 .modal-grid .counter-value {
@@ -384,7 +384,7 @@ body.modal-open {
 
 .modal-grid .counter-value.split-mode .split-counter-part {
     display: grid;
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
     justify-items: center;
     width: 100%;
@@ -392,13 +392,13 @@ body.modal-open {
 }
 
 .modal-grid .counter-value.split-mode .split-counter-tap-hint:first-child {
-    padding-left: 8px;
-    padding-right: 4px;
+    justify-self: end;
+    padding-right: 20px;
 }
 
 .modal-grid .counter-value.split-mode .split-counter-tap-hint:last-child {
-    padding-right: 8px;
-    padding-left: 4px;
+    justify-self: start;
+    padding-left: 20px;
 }
 
 .modal-grid .counter-value.split-mode .split-counter-number {
@@ -419,6 +419,10 @@ body.modal-open {
     inset: 12px 12px 12px;
     grid-template-rows: 1fr;
     align-items: stretch;
+}
+
+.modal-grid .tile.tile-rotated .counter {
+    inset: 12px;
 }
 
 .modal-grid .player-name {
