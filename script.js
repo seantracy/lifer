@@ -8,6 +8,7 @@ const resetButton = document.querySelector('#reset-button');
 const defaultPlayerNamesByIndex = ['Player 1', 'Player 2', 'Player 4', 'Player 3'];
 const playerNameByIndex = [...defaultPlayerNamesByIndex];
 const modalStateByTile = Array.from(mainTiles, () => [0, 0, 0, 0]);
+const modalSplitStateByTile = Array.from(mainTiles, () => [null, null, null, null]);
 const appliedModalDeductionByTile = Array.from(mainTiles, () => 0);
 const eliminatedMainTileByIndex = Array.from(mainTiles, () => false);
 const storageKey = 'lifer-state-v1';
@@ -87,6 +88,21 @@ function applyPersistedState() {
         });
     }
 
+    if (Array.isArray(persistedState.modalSplitCounts)) {
+        persistedState.modalSplitCounts.forEach((savedStates, tileIndex) => {
+            if (!Array.isArray(savedStates) || !modalSplitStateByTile[tileIndex]) {
+                return;
+            }
+
+            modalSplitStateByTile[tileIndex] = savedStates.map((state) => {
+                if (Array.isArray(state) && state.length === 2 && state.every(Number.isFinite)) {
+                    return state;
+                }
+                return null;
+            });
+        });
+    }
+
     if (Array.isArray(persistedState.eliminatedMainTileByIndex)) {
         persistedState.eliminatedMainTileByIndex.forEach((isEliminated, index) => {
             eliminatedMainTileByIndex[index] = Boolean(isEliminated);
@@ -104,6 +120,16 @@ function getCurrentModalStateSnapshot() {
 
     if (activeModalTileIndex !== null && modalTileControllers.length > 0) {
         snapshot[activeModalTileIndex] = modalTileControllers.map((controller) => controller.getCount());
+    }
+
+    return snapshot;
+}
+
+function getCurrentModalSplitStateSnapshot() {
+    const snapshot = modalSplitStateByTile.map((states) => [...states]);
+
+    if (activeModalTileIndex !== null && modalTileControllers.length > 0) {
+        snapshot[activeModalTileIndex] = modalTileControllers.map((controller) => controller.getSplitState());
     }
 
     return snapshot;
@@ -129,6 +155,7 @@ function persistState() {
     const nextState = {
         mainCounts: getCurrentMainCountSnapshot(),
         modalCounts: getCurrentModalStateSnapshot(),
+        modalSplitCounts: getCurrentModalSplitStateSnapshot(),
         eliminatedMainTileByIndex: [...eliminatedMainTileByIndex],
         playerNames: [...playerNameByIndex],
         tileColors: mainTileControllers.map((controller) => controller.getColor()),
@@ -206,6 +233,7 @@ function resetAppState() {
         eliminatedMainTileByIndex[index] = false;
         appliedModalDeductionByTile[index] = 0;
         modalStateByTile[index] = modalStateByTile[index].map(() => defaultModalCount);
+        modalSplitStateByTile[index] = modalSplitStateByTile[index].map(() => null);
     });
 
     updatePlayerNameInputsForIndex(0);
@@ -417,9 +445,12 @@ function initializeTile(tile, initialCount, options = {}) {
         defeatText = 'X',
         lockWhenDefeated = false,
         reviveOnPositiveDelta = false,
+        enableSwipeSplit = false,
         onCountChange = null,
     } = options;
     const counterValue = tile.querySelector('.counter-value');
+    const leftTapHint = document.createElement('span');
+    const rightTapHint = document.createElement('span');
     const leftDelta = document.createElement('span');
     const rightDelta = document.createElement('span');
     const tileIndex = Number(tile.dataset.index);
@@ -427,9 +458,11 @@ function initializeTile(tile, initialCount, options = {}) {
 
     tile.classList.toggle('tile-rotated', invertControlsForSeat);
 
+    leftTapHint.className = 'tap-hint left';
+    rightTapHint.className = 'tap-hint right';
     leftDelta.className = 'delta-indicator left';
     rightDelta.className = 'delta-indicator right';
-    tile.append(leftDelta, rightDelta);
+    tile.append(leftTapHint, rightTapHint, leftDelta, rightDelta);
 
     let count = initialCount;
     let activeTimeout = null;
@@ -441,6 +474,11 @@ function initializeTile(tile, initialCount, options = {}) {
     let isPressing = false;
     let longPressTriggered = false;
     let pressSide = null;
+    let activeSplitIndex = 0;
+    let splitMode = false;
+    let splitCounts = [initialCount, 0];
+    let pressStartX = 0;
+    let pressStartY = 0;
     let baseColor = tile.style.backgroundColor;
     let forcedDefeated = false;
 
@@ -461,6 +499,28 @@ function initializeTile(tile, initialCount, options = {}) {
     }
 
     function syncCounter() {
+        if (splitMode) {
+            const leftSideSymbol = getDeltaForPressSide('left', 1) > 0 ? '+' : '-';
+            const rightSideSymbol = getDeltaForPressSide('right', 1) > 0 ? '+' : '-';
+            counterValue.innerHTML = [
+                `<span class="split-counter-part left-part">`,
+                `<span class="split-counter-tap-hint">${leftSideSymbol}</span>`,
+                `<span class="split-counter-number">${splitCounts[0]}</span>`,
+                `<span class="split-counter-tap-hint">${rightSideSymbol}</span>`,
+                `</span>`,
+                `<span class="split-counter-part right-part">`,
+                `<span class="split-counter-tap-hint">${leftSideSymbol}</span>`,
+                `<span class="split-counter-number">${splitCounts[1]}</span>`,
+                `<span class="split-counter-tap-hint">${rightSideSymbol}</span>`,
+                `</span>`,
+            ].join('');
+            counterValue.classList.add('split-mode');
+            tile.classList.add('tile-split');
+            return;
+        }
+
+        counterValue.classList.remove('split-mode');
+        tile.classList.remove('tile-split');
         syncVisualState();
     }
 
@@ -516,17 +576,33 @@ function initializeTile(tile, initialCount, options = {}) {
             forcedDefeated = false;
         }
 
-        const nextCount = Math.max(minCount, Math.min(maxCount, count + delta));
-        const appliedDelta = nextCount - count;
+        let appliedDelta = 0;
 
-        if (appliedDelta === 0) {
-            return;
+        if (splitMode) {
+            const boundedSplitValue = Math.max(minCount, Math.min(maxCount, splitCounts[activeSplitIndex] + delta));
+            appliedDelta = boundedSplitValue - splitCounts[activeSplitIndex];
+
+            if (appliedDelta === 0) {
+                return;
+            }
+
+            splitCounts[activeSplitIndex] = boundedSplitValue;
+            count = splitCounts[0] + splitCounts[1];
+        } else {
+            const nextCount = Math.max(minCount, Math.min(maxCount, count + delta));
+            appliedDelta = nextCount - count;
+
+            if (appliedDelta === 0) {
+                return;
+            }
+
+            count = nextCount;
         }
-
-        count = nextCount;
         syncCounter();
-        const indicatorSide = indicatorSideOverride || getIndicatorSideForDelta(appliedDelta);
-        showDelta(indicatorSide, appliedDelta);
+        if (!splitMode) {
+            const indicatorSide = indicatorSideOverride || getIndicatorSideForDelta(appliedDelta);
+            showDelta(indicatorSide, appliedDelta);
+        }
 
         if (Math.abs(appliedDelta) >= 10) {
             triggerHeavyHitEffect();
@@ -562,6 +638,42 @@ function initializeTile(tile, initialCount, options = {}) {
         return baseSide === 'left' ? 'right' : 'left';
     }
 
+    function getPressContextFromEvent(event) {
+        if (!splitMode) {
+            const side = getSideFromEvent(event);
+            return { splitIndex: 0, side };
+        }
+
+        const rect = counterValue.getBoundingClientRect();
+        const relativeX = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+        const halfWidth = rect.width / 2;
+        const splitIndex = relativeX < halfWidth ? 0 : 1;
+        const localX = relativeX - splitIndex * halfWidth;
+        const side = localX < halfWidth / 2 ? 'left' : 'right';
+
+        return { splitIndex, side };
+    }
+
+    function activateSplitMode() {
+        if (!enableSwipeSplit || splitMode) {
+            return;
+        }
+
+        splitMode = true;
+        splitCounts = [count, 0];
+        activeSplitIndex = 0;
+        syncCounter();
+    }
+
+    function updateTapHints() {
+        const leftDeltaValue = getDeltaForPressSide('left', 1);
+        const rightDeltaValue = getDeltaForPressSide('right', 1);
+        leftTapHint.textContent = leftDeltaValue > 0 ? '+' : '-';
+        rightTapHint.textContent = rightDeltaValue > 0 ? '+' : '-';
+    }
+
+    updateTapHints();
+
     function setActiveSide(side) {
         if (side === 'left') {
             tile.classList.add('active-left');
@@ -573,8 +685,13 @@ function initializeTile(tile, initialCount, options = {}) {
         tile.classList.remove('active-left');
     }
 
+    function setActiveSplitQuarter(splitIndex, side) {
+        tile.classList.remove('active-left', 'active-right', 'active-split-0-left', 'active-split-0-right', 'active-split-1-left', 'active-split-1-right');
+        tile.classList.add(`active-split-${splitIndex}-${side}`);
+    }
+
     function clearActiveSide() {
-        tile.classList.remove('active-left', 'active-right');
+        tile.classList.remove('active-left', 'active-right', 'active-split-0-left', 'active-split-0-right', 'active-split-1-left', 'active-split-1-right');
     }
 
     function pulseAndClearActive() {
@@ -601,10 +718,19 @@ function initializeTile(tile, initialCount, options = {}) {
             return;
         }
 
+        const pressContext = getPressContextFromEvent(event);
+
         isPressing = true;
         longPressTriggered = false;
-        pressSide = getSideFromEvent(event);
-        setActiveSide(pressSide);
+        pressSide = pressContext.side;
+        activeSplitIndex = splitMode ? pressContext.splitIndex : 0;
+        pressStartX = event.clientX;
+        pressStartY = event.clientY;
+        if (splitMode) {
+            setActiveSplitQuarter(activeSplitIndex, pressContext.side);
+        } else {
+            setActiveSide(pressSide);
+        }
 
         if (holdTimeout) {
             clearTimeout(holdTimeout);
@@ -640,8 +766,23 @@ function initializeTile(tile, initialCount, options = {}) {
         }
 
 
+        const swipeDownDistance = event.clientY - pressStartY;
+        const swipeHorizontalDistance = Math.abs(event.clientX - pressStartX);
+        const shouldSplitFromSwipe =
+            enableSwipeSplit &&
+            !splitMode &&
+            !longPressTriggered &&
+            swipeDownDistance >= 60 &&
+            swipeHorizontalDistance <= 40;
+
+        if (shouldSplitFromSwipe) {
+            activateSplitMode();
+        }
+
         if (!longPressTriggered) {
-            updateCounter(getDeltaForPressSide(pressSide, 1), pressSide);
+            if (!shouldSplitFromSwipe) {
+                updateCounter(getDeltaForPressSide(pressSide, 1), pressSide);
+            }
         }
 
         isPressing = false;
@@ -704,6 +845,11 @@ function initializeTile(tile, initialCount, options = {}) {
     return {
         setCount(nextCount) {
             count = Math.max(minCount, Math.min(maxCount, nextCount));
+            if (splitMode) {
+                splitMode = false;
+                splitCounts = [count, 0];
+                activeSplitIndex = 0;
+            }
             syncCounter();
             leftDelta.classList.remove('show');
             rightDelta.classList.remove('show');
@@ -739,6 +885,22 @@ function initializeTile(tile, initialCount, options = {}) {
         getColor() {
             return baseColor;
         },
+        getSplitState() {
+            if (!splitMode) {
+                return null;
+            }
+            return [...splitCounts];
+        },
+        setSplitState(savedSplitCounts) {
+            if (!enableSwipeSplit || !Array.isArray(savedSplitCounts) || savedSplitCounts.length !== 2) {
+                return;
+            }
+            splitMode = true;
+            splitCounts = [...savedSplitCounts];
+            count = splitCounts[0] + splitCounts[1];
+            activeSplitIndex = 0;
+            syncCounter();
+        },
     };
 }
 
@@ -761,6 +923,7 @@ mainTileControllers = Array.from(mainTiles, (tile, index) => {
 modalTileControllers = Array.from(modalTiles, (tile, index) => {
     const controller = initializeTile(tile, defaultModalCount, {
         minCount: 0,
+        enableSwipeSplit: true,
         onCountChange: persistState,
     });
     const matchingMainTile = mainTileControllers[index];
@@ -806,9 +969,11 @@ function applyModalDeductionToMainTile(tileIndex) {
 function openTileModal(tileIndex) {
     activeModalTileIndex = tileIndex;
     const savedCounts = modalStateByTile[tileIndex] || [0, 0, 0, 0];
+    const savedSplitStates = modalSplitStateByTile[tileIndex] || [];
 
     modalTileControllers.forEach((controller, index) => {
         controller.setCount(savedCounts[index] ?? 0);
+        controller.setSplitState(savedSplitStates[index] ?? null);
         const matchingMainTile = mainTileControllers[index];
         controller.setColor(matchingMainTile ? matchingMainTile.getColor() : randomColor());
     });
@@ -822,6 +987,7 @@ function openTileModal(tileIndex) {
 function closeTileModal() {
     if (activeModalTileIndex !== null) {
         modalStateByTile[activeModalTileIndex] = modalTileControllers.map((controller) => controller.getCount());
+        modalSplitStateByTile[activeModalTileIndex] = modalTileControllers.map((controller) => controller.getSplitState());
         applyModalDeductionToMainTile(activeModalTileIndex);
 
         const shouldEliminateOpener = modalTileControllers.some((controller) => controller.getCount() >= 21);
